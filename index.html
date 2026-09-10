@@ -14,34 +14,71 @@
     * { box-sizing: border-box; }
 
     html, body {
+      width: 100%;
+      height: 100%;
       margin: 0;
-      min-height: 100%;
+      overflow: hidden;
       background: #fff;
     }
 
     body {
-      overflow-x: hidden;
+      min-height: 100dvh;
       -webkit-tap-highlight-color: transparent;
+      overscroll-behavior: none;
     }
 
     #viewer {
+      display: flex;
       width: 100vw;
-      min-height: 100vh;
+      height: 100dvh;
+      overflow: hidden;
       background: #fff;
+      scroll-behavior: smooth;
+      scroll-snap-stop: always;
+      scrollbar-width: none;
+      overscroll-behavior: none;
+      touch-action: none;
+    }
+
+    #viewer::-webkit-scrollbar { display: none; }
+
+    #viewer.vertical {
+      flex-direction: column;
+      overflow-y: auto;
+      scroll-snap-type: y mandatory;
+    }
+
+    #viewer.horizontal {
+      flex-direction: row;
+      overflow-x: auto;
+      scroll-snap-type: x mandatory;
     }
 
     .page {
+      display: flex;
+      flex: 0 0 100%;
+      align-items: center;
+      justify-content: center;
       width: 100%;
+      height: 100%;
+      min-height: 100%;
       margin: 0;
       padding: 0;
       background: #fff;
       line-height: 0;
+      scroll-snap-align: start;
+      scroll-snap-stop: always;
+    }
+
+    #viewer.horizontal .page {
+      width: 100%;
+      min-width: 100%;
     }
 
     canvas {
       display: block;
-      width: 100%;
-      height: auto;
+      max-width: 100%;
+      max-height: 100%;
       margin: 0;
       padding: 0;
       background: #fff;
@@ -85,14 +122,25 @@
   <script>
     // Lze změnit napevno, nebo předat URL parametrem ?pdf=...
     const DEFAULT_PDF_URL =
-      "náhled průvodce výstavy Do těla.pdf";
+      "https://lfp.cuni.cz/wp-content/uploads/2024/05/safety-training.pdf";
 
     const params = new URLSearchParams(window.location.search);
     const pdfUrl = params.get("pdf") || DEFAULT_PDF_URL;
+    // Výchozí režim je vertikální. Alternativa: ?direction=horizontal
+    const pageDirection = params.get("direction") === "horizontal"
+      ? "horizontal"
+      : "vertical";
     const viewer = document.getElementById("viewer");
     const status = document.getElementById("status");
     let pdfDocument = null;
     let renderToken = 0;
+    let currentPage = 0;
+    let gestureStartX = 0;
+    let gestureStartY = 0;
+    let gestureActive = false;
+    let wheelLocked = false;
+
+    viewer.classList.add(pageDirection);
 
     pdfjsLib.GlobalWorkerOptions.workerSrc =
       "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
@@ -119,9 +167,18 @@
 
       const baseViewport = page.getViewport({ scale: 1 });
       const targetWidth = Math.max(1, viewer.clientWidth);
-      const cssScale = targetWidth / baseViewport.width;
+      const targetHeight = Math.max(1, viewer.clientHeight);
+      const cssScale = Math.min(
+        targetWidth / baseViewport.width,
+        targetHeight / baseViewport.height
+      );
       const viewport = page.getViewport({ scale: cssScale });
       const outputScale = Math.min(window.devicePixelRatio || 1, 2);
+
+      pageContainer.style.width = `${targetWidth}px`;
+      pageContainer.style.height = `${targetHeight}px`;
+      pageContainer.style.minWidth = `${targetWidth}px`;
+      pageContainer.style.minHeight = `${targetHeight}px`;
 
       const canvas = pageContainer.querySelector("canvas") || document.createElement("canvas");
       const context = canvas.getContext("2d", { alpha: false });
@@ -149,6 +206,39 @@
         const page = await pdfDocument.getPage(index + 1);
         await renderPage(page, pages[index], token);
       }
+
+      goToPage(currentPage, false);
+    }
+
+    function goToPage(pageIndex, smooth = true) {
+      if (!pdfDocument) return;
+      currentPage = Math.max(0, Math.min(pageIndex, pdfDocument.numPages - 1));
+      const position = pageDirection === "horizontal"
+        ? { left: currentPage * viewer.clientWidth, top: 0 }
+        : { left: 0, top: currentPage * viewer.clientHeight };
+
+      viewer.scrollTo({
+        ...position,
+        behavior: smooth ? "smooth" : "auto"
+      });
+    }
+
+    function changePage(step) {
+      goToPage(currentPage + step);
+    }
+
+    function handleSwipe(endX, endY) {
+      const deltaX = endX - gestureStartX;
+      const deltaY = endY - gestureStartY;
+      const primaryDelta = pageDirection === "horizontal" ? deltaX : deltaY;
+      const secondaryDelta = pageDirection === "horizontal" ? deltaY : deltaX;
+
+      if (Math.abs(primaryDelta) < 45 || Math.abs(primaryDelta) < Math.abs(secondaryDelta)) {
+        return;
+      }
+
+      // Swipe up/left = next page; swipe down/right = previous page.
+      changePage(primaryDelta < 0 ? 1 : -1);
     }
 
     async function loadPdf() {
@@ -176,6 +266,49 @@
         );
       }
     }
+
+    viewer.addEventListener("touchstart", event => {
+      if (event.touches.length !== 1) return;
+      gestureActive = true;
+      gestureStartX = event.touches[0].clientX;
+      gestureStartY = event.touches[0].clientY;
+    }, { passive: true });
+
+    viewer.addEventListener("touchend", event => {
+      if (!gestureActive || event.changedTouches.length !== 1) return;
+      gestureActive = false;
+      const touch = event.changedTouches[0];
+      handleSwipe(touch.clientX, touch.clientY);
+    }, { passive: true });
+
+    viewer.addEventListener("wheel", event => {
+      event.preventDefault();
+      if (wheelLocked) return;
+      const delta = pageDirection === "horizontal" ? event.deltaX || event.deltaY : event.deltaY || event.deltaX;
+      if (Math.abs(delta) < 2) return;
+      wheelLocked = true;
+      changePage(delta > 0 ? 1 : -1);
+      window.setTimeout(() => { wheelLocked = false; }, 550);
+    }, { passive: false });
+
+    window.addEventListener("keydown", event => {
+      const nextKey = pageDirection === "horizontal" ? "ArrowRight" : "ArrowDown";
+      const previousKey = pageDirection === "horizontal" ? "ArrowLeft" : "ArrowUp";
+
+      if (event.key === nextKey || event.key === "PageDown") {
+        event.preventDefault();
+        changePage(1);
+      } else if (event.key === previousKey || event.key === "PageUp") {
+        event.preventDefault();
+        changePage(-1);
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        goToPage(0);
+      } else if (event.key === "End") {
+        event.preventDefault();
+        goToPage(pdfDocument ? pdfDocument.numPages - 1 : 0);
+      }
+    });
 
     let resizeTimer;
     window.addEventListener("resize", () => {
