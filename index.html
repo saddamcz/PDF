@@ -2,7 +2,7 @@
 <html lang="cs">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=yes, maximum-scale=5, viewport-fit=cover">
   <meta name="theme-color" content="#000000">
   <title>PDF</title>
   <style>
@@ -37,7 +37,8 @@
       scroll-snap-stop: always;
       scrollbar-width: none;
       overscroll-behavior: none;
-      touch-action: none;
+      /* Povolí nativní pinch-zoom, zatímco swipe řeší vlastní JavaScript. */
+      touch-action: pinch-zoom;
     }
 
     #viewer::-webkit-scrollbar { display: none; }
@@ -140,6 +141,7 @@
     let gestureStartX = 0;
     let gestureStartY = 0;
     let gestureActive = false;
+    let gestureHadMultipleTouches = false;
     let wheelLocked = false;
 
     viewer.classList.add(pageDirection);
@@ -270,17 +272,34 @@
     }
 
     viewer.addEventListener("touchstart", event => {
-      if (event.touches.length !== 1) return;
+      if (event.touches.length !== 1) {
+        gestureHadMultipleTouches = true;
+        gestureActive = false;
+        return;
+      }
       gestureActive = true;
+      gestureHadMultipleTouches = false;
       gestureStartX = event.touches[0].clientX;
       gestureStartY = event.touches[0].clientY;
     }, { passive: true });
 
+    viewer.addEventListener("touchmove", event => {
+      if (event.touches.length > 1) {
+        gestureHadMultipleTouches = true;
+        gestureActive = false;
+      }
+    }, { passive: true });
+
     viewer.addEventListener("touchend", event => {
-      if (!gestureActive || event.changedTouches.length !== 1) return;
+      if (!gestureActive || gestureHadMultipleTouches || event.changedTouches.length !== 1) return;
       gestureActive = false;
       const touch = event.changedTouches[0];
       handleSwipe(touch.clientX, touch.clientY);
+    }, { passive: true });
+
+    viewer.addEventListener("touchcancel", () => {
+      gestureActive = false;
+      gestureHadMultipleTouches = false;
     }, { passive: true });
 
     viewer.addEventListener("wheel", event => {
