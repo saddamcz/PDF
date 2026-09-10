@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <title>PDF</title>
+  <style>
+    :root {
+      color-scheme: light;
+      background: #fff;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: #fff;
+    }
+
+    body {
+      overflow-x: hidden;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    #viewer {
+      width: 100vw;
+      min-height: 100vh;
+      background: #fff;
+    }
+
+    .page {
+      width: 100%;
+      margin: 0;
+      padding: 0;
+      background: #fff;
+      line-height: 0;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+      margin: 0;
+      padding: 0;
+      background: #fff;
+    }
+
+    #status {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: #fff;
+      color: #333;
+      font: 16px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      text-align: center;
+      z-index: 10;
+    }
+
+    #status[hidden] { display: none; }
+
+    #status.error {
+      color: #7d1b1b;
+    }
+
+    .error-box {
+      max-width: 680px;
+    }
+
+    .error-box code {
+      overflow-wrap: anywhere;
+      font-size: .9em;
+    }
+  </style>
+</head>
+<body>
+  <main id="viewer" aria-label="Publikace"></main>
+  <div id="status">Načítám publikaci…</div>
+
+  <!-- PDF.js je použito pouze jako vykreslovací knihovna; vlastní toolbar se nepoužívá. -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    // Lze změnit napevno, nebo předat URL parametrem ?pdf=...
+    const DEFAULT_PDF_URL =
+      "https://lfp.cuni.cz/wp-content/uploads/2024/05/safety-training.pdf";
+
+    const params = new URLSearchParams(window.location.search);
+    const pdfUrl = params.get("pdf") || DEFAULT_PDF_URL;
+    const viewer = document.getElementById("viewer");
+    const status = document.getElementById("status");
+    let pdfDocument = null;
+    let renderToken = 0;
+
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+    function showError(message) {
+      status.className = "error";
+      status.innerHTML =
+        '<div class="error-box"><strong>Publikaci se nepodařilo načíst.</strong><br><br>' +
+        message +
+        "</div>";
+    }
+
+    function escapeHtml(value) {
+      return value.replace(/[&<>\"]/g, character => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "\"": "&quot;"
+      })[character]);
+    }
+
+    async function renderPage(page, pageContainer, token) {
+      if (token !== renderToken) return;
+
+      const baseViewport = page.getViewport({ scale: 1 });
+      const targetWidth = Math.max(1, viewer.clientWidth);
+      const cssScale = targetWidth / baseViewport.width;
+      const viewport = page.getViewport({ scale: cssScale });
+      const outputScale = Math.min(window.devicePixelRatio || 1, 2);
+
+      const canvas = pageContainer.querySelector("canvas") || document.createElement("canvas");
+      const context = canvas.getContext("2d", { alpha: false });
+
+      canvas.width = Math.ceil(viewport.width * outputScale);
+      canvas.height = Math.ceil(viewport.height * outputScale);
+      canvas.style.width = `${Math.ceil(viewport.width)}px`;
+      canvas.style.height = `${Math.ceil(viewport.height)}px`;
+
+      if (!canvas.parentNode) pageContainer.appendChild(canvas);
+
+      await page.render({
+        canvasContext: context,
+        viewport,
+        transform: outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : null
+      }).promise;
+    }
+
+    async function renderAllPages() {
+      if (!pdfDocument) return;
+      const token = ++renderToken;
+      const pages = Array.from(viewer.querySelectorAll(".page"));
+
+      for (let index = 0; index < pages.length; index += 1) {
+        const page = await pdfDocument.getPage(index + 1);
+        await renderPage(page, pages[index], token);
+      }
+    }
+
+    async function loadPdf() {
+      try {
+        pdfDocument = await pdfjsLib.getDocument({
+          url: pdfUrl,
+          withCredentials: false
+        }).promise;
+
+        const fragment = document.createDocumentFragment();
+        for (let index = 0; index < pdfDocument.numPages; index += 1) {
+          const page = document.createElement("section");
+          page.className = "page";
+          page.setAttribute("aria-label", `Strana ${index + 1}`);
+          fragment.appendChild(page);
+        }
+        viewer.appendChild(fragment);
+        status.hidden = true;
+        await renderAllPages();
+      } catch (error) {
+        console.error(error);
+        showError(
+          "Tato stránka musí být hostovaná na stejném webu jako PDF, nebo musí server PDF povolit načítání z jiné domény (CORS).<br><br>" +
+          "Aktuální PDF URL:<br><code>" + escapeHtml(pdfUrl) + "</code>"
+        );
+      }
+    }
+
+    let resizeTimer;
+    window.addEventListener("resize", () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => renderAllPages(), 150);
+    });
+
+    loadPdf();
+  </script>
+</body>
+</html>
