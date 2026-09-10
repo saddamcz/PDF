@@ -37,8 +37,8 @@
       scroll-snap-stop: always;
       scrollbar-width: none;
       overscroll-behavior: none;
-      /* Povolí nativní pinch-zoom, zatímco swipe řeší vlastní JavaScript. */
-      touch-action: pinch-zoom;
+      touch-action: pinch-zoom; /* Povolí nativní pinch-zoom, zatímco swipe řeší vlastní JavaScript. */
+      /* touch-action: none; */ /* Zakáže nativní pinch-zoom, zatímco swipe řeší vlastní JavaScript. */
     }
 
     #viewer::-webkit-scrollbar { display: none; }
